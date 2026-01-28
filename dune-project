@@ -85,7 +85,7 @@
    (= :version))
   (odoc :with-doc)
   (ezcurl
-   (>= 0.2.3))
+   (and (>= 0.2.3) (< 0.3)))
   ocurl
   (alcotest :with-test))
  (synopsis "Collector client for opentelemetry, using http + ezcurl"))
