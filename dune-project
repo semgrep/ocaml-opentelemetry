@@ -122,7 +122,8 @@
   (lwt
    (>= "5.3"))
   (cohttp-lwt
-   (>= "6.0.0"))
+   ; 6.2.0 exposes an IO module (i.e interface breaking)
+   (and (>= "6.0.0") (< "6.2.0")))
   (alcotest :with-test))
  (synopsis "Opentelemetry tracing for Cohttp HTTP servers"))
 
