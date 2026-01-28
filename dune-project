@@ -84,8 +84,9 @@
   (opentelemetry
    (= :version))
   (odoc :with-doc)
+  ; upper bound ezcurl, as 0.3 has breaking changes
   (ezcurl
-   (>= 0.2.3))
+   (and (>= 0.2.3) (< 0.3)))
   ocurl
   (alcotest :with-test))
  (synopsis "Collector client for opentelemetry, using http + ezcurl"))
