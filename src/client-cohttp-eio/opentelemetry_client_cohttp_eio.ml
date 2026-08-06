@@ -222,6 +222,7 @@ end
    exceptions inside should be caught, see
    https://opentelemetry.io/docs/reference/specification/error-handling/ *)
 let mk_emitter ~stop ~net (config : Config.t) : (module EMITTER) =
+  let signal_stop () = Atomic.set stop true in
   (* local helpers *)
   let open struct
     let client =
@@ -235,13 +236,14 @@ let mk_emitter ~stop ~net (config : Config.t) : (module EMITTER) =
       | Ok () -> ()
       | Error `Sysbreak ->
         Printf.eprintf "ctrl-c captured, stopping\n%!";
-        Atomic.set stop true
+        signal_stop ()
       | Error err ->
         (* TODO: log error _via_ otel? *)
         Atomic.incr n_errors;
-        report_err_ err;
-        (* avoid crazy error loop *)
-        Eio_unix.sleep 3.
+        (* No backoff: cleanup's forced flush must not stall process exit.
+           Skip the report once shutdown is signalled -- a failed export there
+           is expected teardown noise, not a real error. *)
+        if not (Atomic.get stop) then report_err_ err
 
     let timeout =
       if config.batch_timeout_ms > 0 then
@@ -336,7 +338,7 @@ let mk_emitter ~stop ~net (config : Config.t) : (module EMITTER) =
     let cleanup ~on_done () =
       if Config.Env.get_debug () then
         Printf.eprintf "opentelemetry: exiting…\n%!";
-      Atomic.set stop true;
+      signal_stop ();
       run_tick_callbacks ();
       sample_gc_metrics_if_needed ();
       emit_all ~force:true;
@@ -449,12 +451,17 @@ let create_backend ~sw ?(stop = Atomic.make false) ?(config = Config.make ())
 
      NOTE: This cannot be located inside the [Backend], because switches
      are not thread safe, and cannot be used accross domains, but the
-     backend is accessed across domains. *)
-  Eio.Fiber.fork ~sw (fun () ->
-      while not @@ Atomic.get stop do
+     backend is accessed across domains.
+
+     Daemon so the switch cancels the inter-tick sleep at teardown rather than
+     waiting it out; [cleanup] force-flushes the final batch before the switch
+     returns, so the cancel can at worst drop a tick already mid-send. *)
+  Eio.Fiber.fork_daemon ~sw (fun () ->
+      while not (Atomic.get stop) do
         Eio.Time.sleep env#clock 0.5;
-        B.tick ()
-      done);
+        if not (Atomic.get stop) then B.tick ()
+      done;
+      `Stop_daemon);
 
   (module B)
 
