@@ -77,6 +77,15 @@ let n_errors = Atomic.make 0
 
 let n_dropped = Atomic.make 0
 
+let tick_interval_s = 0.5
+
+(* Longer wait after a failed export, to avoid hammering a down endpoint. *)
+let export_backoff_s = 3.0
+
+(* Per-POST cap: [Httpc.send] has no timeout, so a black-hole endpoint (accepts
+   the connection, never replies) would otherwise wedge a tick or process exit. *)
+let send_timeout_s = 5.0
+
 let report_err_ = function
   | `Sysbreak -> Printf.eprintf "opentelemetry: ctrl-c captured, stopping\n%!"
   | `Failure msg ->
@@ -214,6 +223,9 @@ module type EMITTER = sig
 
   val tick : unit -> unit
 
+  (** Background flush loop; forked into the caller's switch by {!create_backend}. *)
+  val run_ticker : unit -> unit
+
   val cleanup : on_done:(unit -> unit) -> unit -> unit
 end
 
@@ -222,6 +234,23 @@ end
    exceptions inside should be caught, see
    https://opentelemetry.io/docs/reference/specification/error-handling/ *)
 let mk_emitter ~stop ~net (config : Config.t) : (module EMITTER) =
+  (* One-shot shutdown signal. A promise, not a condition: level-triggered
+     ([await] after resolution returns at once, so no lost-wakeup window) and it
+     wakes awaiters on any domain. *)
+  let shutdown, resolve_shutdown = Eio.Promise.create () in
+  let signal_stop () =
+    (* guarded: Eio.Promise.resolve raises if the promise is already resolved *)
+    if not (Atomic.exchange stop true) then
+      Eio.Promise.resolve resolve_shutdown ()
+  in
+  let wait_or_shutdown d =
+    Fiber.first
+      (fun () -> Eio.Promise.await shutdown)
+      (fun () -> Eio_unix.sleep d)
+  in
+  (* [send_http] sets this on failure; the ticker reads+resets it to pick the next
+     wait (backoff vs cadence). *)
+  let send_failed = Atomic.make false in
   (* local helpers *)
   let open struct
     let client =
@@ -229,19 +258,31 @@ let mk_emitter ~stop ~net (config : Config.t) : (module EMITTER) =
       Mirage_crypto_rng_unix.use_default ();
       Httpc.create net
 
+    (* No backoff here on purpose — the ticker owns it; a failed export returns at
+       once, bounded by [send_timeout_s]. *)
     let send_http ~url data : unit =
-      let r = Httpc.send client ~url ~decode:(`Ret ()) data in
-      match r with
-      | Ok () -> ()
-      | Error `Sysbreak ->
+      let outcome =
+        Fiber.first
+          (fun () -> `Sent (Httpc.send client ~url ~decode:(`Ret ()) data))
+          (fun () ->
+            Eio_unix.sleep send_timeout_s;
+            `Timed_out)
+      in
+      match outcome with
+      | `Sent (Ok ()) -> ()
+      | `Sent (Error `Sysbreak) ->
         Printf.eprintf "ctrl-c captured, stopping\n%!";
-        Atomic.set stop true
-      | Error err ->
-        (* TODO: log error _via_ otel? *)
+        signal_stop ()
+      | `Sent (Error err) ->
         Atomic.incr n_errors;
-        report_err_ err;
-        (* avoid crazy error loop *)
-        Eio_unix.sleep 3.
+        Atomic.set send_failed true;
+        (* once shutting down, a failed export is expected teardown noise *)
+        if not (Atomic.get stop) then report_err_ err
+      | `Timed_out ->
+        Atomic.incr n_errors;
+        Atomic.set send_failed true;
+        if not (Atomic.get stop) then
+          report_err_ (`Failure (spf "export POST timed out after %.0fs" send_timeout_s))
 
     let timeout =
       if config.batch_timeout_ms > 0 then
@@ -333,13 +374,32 @@ let mk_emitter ~stop ~net (config : Config.t) : (module EMITTER) =
       sample_gc_metrics_if_needed ();
       emit_all ~force:false
 
+    (* Because exports never block (see [send_http]), no [tick] blocks — so a
+       synchronous caller that ticks before cleanup ([Collector.remove_backend])
+       cannot stall here. *)
+    let run_ticker () =
+      let rec loop prev_failed =
+        wait_or_shutdown
+          (if prev_failed then export_backoff_s else tick_interval_s);
+        if not (Atomic.get stop) then (
+          Atomic.set send_failed false;
+          tick ();
+          loop (Atomic.get send_failed))
+      in
+      loop false
+
     let cleanup ~on_done () =
       if Config.Env.get_debug () then
         Printf.eprintf "opentelemetry: exiting…\n%!";
-      Atomic.set stop true;
+      (* Signal before flushing. The ticker is non-daemon on purpose: the switch
+         awaits its in-flight export instead of cancelling it mid-send, which would
+         drop a batch it had already popped. *)
+      signal_stop ();
       run_tick_callbacks ();
       sample_gc_metrics_if_needed ();
-      emit_all ~force:true;
+      (* [Cancel.protect]: a switch teardown racing in must not abort this final
+         flush mid-send. *)
+      Eio.Cancel.protect (fun () -> emit_all ~force:true);
       on_done ()
   end in
   (module M : EMITTER)
@@ -449,12 +509,11 @@ let create_backend ~sw ?(stop = Atomic.make false) ?(config = Config.make ())
 
      NOTE: This cannot be located inside the [Backend], because switches
      are not thread safe, and cannot be used accross domains, but the
-     backend is accessed across domains. *)
-  Eio.Fiber.fork ~sw (fun () ->
-      while not @@ Atomic.get stop do
-        Eio.Time.sleep env#clock 0.5;
-        B.tick ()
-      done);
+     backend is accessed across domains.
+
+     Non-daemon so the switch awaits an in-flight export at teardown (see
+     [cleanup]); its waits are interruptible, so it still exits promptly. *)
+  Eio.Fiber.fork ~sw E.run_ticker;
 
   (module B)
 
