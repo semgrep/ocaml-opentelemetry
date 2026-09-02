@@ -11,14 +11,32 @@ clean:
 	@dune clean
 
 protoc-gen:
-	FORCE_GENPROTO=true @dune build @lint
+	FORCE_GENPROTO=true dune build @lint
+
+update-submodules:
+	git submodule update --init
+
+doc:
+	@dune build @doc
+
+PACKAGES=$(shell opam show . -f name)
+odig-doc:
+	@odig odoc --cache-dir=_doc/ $(PACKAGES)
 
 format:
 	@dune build @fmt --auto-promote
 
+format-check:
+	@dune build $(DUNE_OPTS) @fmt --display=quiet
+
+setup-githooks:
+	uvx pre-commit install --hook-type pre-push
+
 WATCH ?= @all
 watch:
 	@dune build $(WATCH) -w $(OPTS)
+
+include deps/Makefile.ci
 
 VERSION=$(shell awk '/^version:/ {print $$2}' opentelemetry.opam)
 update_next_tag:

@@ -1,3 +1,49 @@
+## 0.91.1
+
+- fix: lazy init of random generators
+- fix: in trace, respect ~parent:P_none
+
+## 0.91
+
+- expose Self_debug.level_above
+- config: better defaults in Sdk, have batching enabled by default
+
+- better error message for otlp http failures
+- bounded queue: provide a per-item measure function for better errors/metrics
+- fix: retries are self_debug logged at warning level
+- move from ocurl to curl as a dep
+
+## 0.90
+
+- major refactor: split library into `opentelemetry.core`, `opentelemetry`,
+  `opentelemetry.util`, `opentelemetry.emitter`, `opentelemetry.atomic`, revamp internals
+- per-signal providers: separate trace, meter, and logger providers replace
+  the single monolithic exporter
+- `opentelemetry.ambient-context` is now a standalone library, once again
+- new `opentelemetry-client-ocurl-lwt` package
+- client: split `opentelemetry-client-sync` off of the main client library
+- client: add support for `http/json` protocol alongside `http/protobuf`
+- client: add HTTP retry with exponential backoff
+- client: overhaul bounded queue; introduce generic consumer framework
+- client: add `Exporter_add_batching`, `Emitter_add_batching`, `Emitter_sample`,
+  `Emitter_limit_interval` combinators. Batching is factored out of individual
+  client libraries.
+- client: add sampler as an emitter transformer
+- client: add `exporter_stdout` and `debug_exporter`
+- client: add `self_metrics` and `self_debug` to exporters
+- client: add `after_shutdown` callback in ocurl/ocurl-lwt clients
+- `Span.dummy`: inert span that is never modified
+- `Span.record_exception` now also sets the span status to error
+- `Span.set_span_status` added in `opentelemetry.trace`
+- `Span`: carry flags to `span_link`
+- `Span`: now mutable thanks to ocaml-protoc 4.0, replaces old `Scope.t` entirely
+- `Meter.emit` and `Meter_provider.emit_l` added
+- emitter: add `flat_map`, `tap`, `to_list`, `enabled` combinators
+- clock abstraction added; `ptime` used by default in logger and metrics
+- interval limiter used for `metrics_callbacks`
+- update to OTEL spec 1.8.0
+- update semantic conventions
+- various bug fixes and performance improvements
 
 ## 0.12
 

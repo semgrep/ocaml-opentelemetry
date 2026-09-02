@@ -7,33 +7,46 @@
 
 (** {2 Types} *)
 
-type status = {
-  code : int32;
-  message : bytes;
-  details : bytes list;
+type status = private {
+  mutable _presence: Pbrt.Bitfield.t; (** presence for 2 fields *)
+  mutable code : int32;
+  mutable message : bytes;
+  mutable details : bytes list;
 }
 
 
 (** {2 Basic values} *)
 
-val default_status : 
-  ?code:int32 ->
-  ?message:bytes ->
-  ?details:bytes list ->
-  unit ->
-  status
-(** [default_status ()] is the default value for type [status] *)
+val default_status : unit -> status 
+(** [default_status ()] is a new empty value for type [status] *)
 
 
 (** {2 Make functions} *)
 
 val make_status : 
-  code:int32 ->
-  message:bytes ->
-  details:bytes list ->
+  ?code:int32 ->
+  ?message:bytes ->
+  ?details:bytes list ->
   unit ->
   status
 (** [make_status … ()] is a builder for type [status] *)
+
+val copy_status : status -> status
+
+val status_has_code : status -> bool
+  (** presence of field "code" in [status] *)
+
+val status_set_code : status -> int32 -> unit
+  (** set field code in status *)
+
+val status_has_message : status -> bool
+  (** presence of field "message" in [status] *)
+
+val status_set_message : status -> bytes -> unit
+  (** set field message in status *)
+
+val status_set_details : status -> bytes list -> unit
+  (** set field details in status *)
 
 
 (** {2 Formatters} *)
@@ -52,3 +65,15 @@ val encode_pb_status : status -> Pbrt.Encoder.t -> unit
 
 val decode_pb_status : Pbrt.Decoder.t -> status
 (** [decode_pb_status decoder] decodes a [status] binary value from [decoder] *)
+
+
+(** {2 Protobuf YoJson Encoding} *)
+
+val encode_json_status : status -> Yojson.Basic.t
+(** [encode_json_status v encoder] encodes [v] to to json *)
+
+
+(** {2 JSON Decoding} *)
+
+val decode_json_status : Yojson.Basic.t -> status
+(** [decode_json_status decoder] decodes a [status] value from [decoder] *)

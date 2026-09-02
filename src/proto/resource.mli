@@ -7,30 +7,43 @@
 
 (** {2 Types} *)
 
-type resource = {
-  attributes : Common.key_value list;
-  dropped_attributes_count : int32;
+type resource = private {
+  mutable _presence: Pbrt.Bitfield.t; (** presence for 1 fields *)
+  mutable attributes : Common.key_value list;
+  mutable dropped_attributes_count : int32;
+  mutable entity_refs : Common.entity_ref list;
 }
 
 
 (** {2 Basic values} *)
 
-val default_resource : 
-  ?attributes:Common.key_value list ->
-  ?dropped_attributes_count:int32 ->
-  unit ->
-  resource
-(** [default_resource ()] is the default value for type [resource] *)
+val default_resource : unit -> resource 
+(** [default_resource ()] is a new empty value for type [resource] *)
 
 
 (** {2 Make functions} *)
 
 val make_resource : 
-  attributes:Common.key_value list ->
-  dropped_attributes_count:int32 ->
+  ?attributes:Common.key_value list ->
+  ?dropped_attributes_count:int32 ->
+  ?entity_refs:Common.entity_ref list ->
   unit ->
   resource
 (** [make_resource … ()] is a builder for type [resource] *)
+
+val copy_resource : resource -> resource
+
+val resource_set_attributes : resource -> Common.key_value list -> unit
+  (** set field attributes in resource *)
+
+val resource_has_dropped_attributes_count : resource -> bool
+  (** presence of field "dropped_attributes_count" in [resource] *)
+
+val resource_set_dropped_attributes_count : resource -> int32 -> unit
+  (** set field dropped_attributes_count in resource *)
+
+val resource_set_entity_refs : resource -> Common.entity_ref list -> unit
+  (** set field entity_refs in resource *)
 
 
 (** {2 Formatters} *)
@@ -49,3 +62,15 @@ val encode_pb_resource : resource -> Pbrt.Encoder.t -> unit
 
 val decode_pb_resource : Pbrt.Decoder.t -> resource
 (** [decode_pb_resource decoder] decodes a [resource] binary value from [decoder] *)
+
+
+(** {2 Protobuf YoJson Encoding} *)
+
+val encode_json_resource : resource -> Yojson.Basic.t
+(** [encode_json_resource v encoder] encodes [v] to to json *)
+
+
+(** {2 JSON Decoding} *)
+
+val decode_json_resource : Yojson.Basic.t -> resource
+(** [decode_json_resource decoder] decodes a [resource] value from [decoder] *)
